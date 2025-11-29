@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>ระบบนับสต็อกสินค้า (Stock Counter)</title>
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+  <style>
+    :root{--bg:#f5f7fa;--card:#fff;--accent:#2b7be4;--danger:#e04c4c;--warn:#e09b1c}
+    body{font-family:Inter, Roboto, Arial, sans-serif;background:var(--bg);padding:18px}
+    h1{text-align:center;margin-bottom:12px}
+    .wrap{max-width:980px;margin:0 auto}
+    .card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(15,20,30,0.06)}
+    .grid{display:grid;grid-template-columns:1fr 380px;gap:18px}
+    .form input,.form select{width:100%;padding:10px;margin-top:8px;border-radius:8px;border:1px solid #d0d6df}
+    .form button{width:100%;padding:10px;margin-top:10px;border-radius:8px;border:none;background:var(--accent);color:white}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    .controls select,.controls input{padding:8px;border-radius:8px;border:1px solid #d0d6df}
+    #list{margin-top:12px}
+    .item{display:flex;justify-content:space-between;align-items:center;padding:12px;border-radius:10px;margin-bottom:8px;background:#f6f8fb}
+    .item.low{border-left:6px solid var(--warn);background:#fff8ec}
+    .item.critical{border-left:6px solid var(--danger);background:#fff6f6}
+    .meta{font-size:13px;color:#555}
+    .btns button{margin-left:6px;padding:8px;border-radius:8px;border:none;cursor:pointer}
+    .btns .danger{background:var(--danger);color:white}
+    .summary{margin-top:12px;padding:12px;border-radius:8px;background:#f0fbf4}
+    .logs{margin-top:12px;height:200px;overflow:auto;padding:10px;background:#0f172433;border-radius:8px;font-family:monospace;font-size:13px}
+    .install{margin-top:10px}
+    @media(max-width:880px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>ระบบนับสต็อกสินค้า</h1>
+
+    <div class="card grid">
+      <div>
+        <div class="form">
+          <h3>เพิ่ม / แก้ไขสินค้า</h3>
+          <input id="name" placeholder="ชื่อสินค้า" />
+          <select id="category">
+            <option value="ทั่วไป">ทั่วไป</option>
+            <option value="อาหาร">อาหาร</option>
+            <option value="อุปกรณ์">เครื่องใช้</option>
+            <option value="สต็อกสำรอง">สต็อกสำรอง</option>
+          </select>
+          <input id="qty" type="number" placeholder="จำนวนเริ่มต้น" />
+          <input id="minStock" type="number" placeholder="จำนวนขั้นต่ำเพื่อเตือน (เช่น 5)" />
+          <input id="cost" type="number" step="0.01" placeholder="ต้นทุนต่อชิ้น (บาท)" />
+          <input id="price" type="number" step="0.01" placeholder="ราคาขายต่อชิ้น (บาท)" />
+          <button id="addBtn" onclick="addOrUpdate()">เพิ่มสินค้า</button>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="controls">
+            <input id="search" placeholder="ค้นหาสินค้า..." oninput="render()" />
+            <select id="filterCategory" onchange="render()">
+              <option value="all">ทุกหมวดหมู่</option>
+            </select>
+            <select id="sortBy" onchange="render()">
+              <option value="name">เรียงตามชื่อ (A→Z)</option>
+              <option value="qty_desc">จำนวนมาก→น้อย</option>
+              <option value="qty_asc">จำนวน น้อย→มาก</option>
+              <option value="value_desc">มูลค่าสูง→ต่ำ</option>
+              <option value="value_asc">มูลค่าต่ำ→สูง</option>
+            </select>
+          </div>
+
+          <div id="list"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card" style="padding:12px">
+          <h3>สรุปสต็อก</h3>
+          <div id="summary" class="summary">กำลังโหลด...</div>
+
+          <h3 style="margin-top:12px">ประวัติการเคลื่อนไหว</h3>
+          <div id="logs" class="logs"></div>
+
+          <div class="install">
+            <button onclick="exportCSV()">Export CSV</button>
+            <button onclick="importCSV()">Import CSV</button>
+            <button onclick="clearAll()" style="margin-left:6px;background:#555;color:white">ล้างข้อมูลทั้งหมด</button>
+          </div>
+
+          <div style="margin-top:10px">
+            <button id="promptInstall" style="display:none;width:100%;padding:10px;border-radius:8px;background:#0b7a3f;color:white">ติดตั้งเป็นแอป (Install)</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Data model
+  let products = JSON.parse(localStorage.getItem('products')) || [];
+  let logs = JSON.parse(localStorage.getItem('stock_logs')) || [];
+  let editIndex = null;
+
+  // Populate filter categories
+  function rebuildCategories() {
+    const set = new Set(['all']);
+    products.forEach(p=>set.add(p.category||'ทั่วไป'));
+    const sel = document.getElementById('filterCategory');
+    sel.innerHTML = '';
+    Array.from(set).forEach(cat=>{
+      const opt = document.createElement('option'); opt.value = cat; opt.textContent = cat==='all'? 'ทุกหมวดหมู่' : cat; sel.appendChild(opt);
+    });
+  }
+
+  function save() {
+    localStorage.setItem('products', JSON.stringify(products));
+    localStorage.setItem('stock_logs', JSON.stringify(logs));
+  }
+
+  function timeNow() {
+    return new Date().toLocaleString('th-TH');
+  }
+
+  function addLog(text){
+    logs.unshift(`[${timeNow()}] ${text}`);
+    if (logs.length>500) logs.pop();
+    save(); renderLogs();
+  }
+
+  function addOrUpdate(){
+    const name = document.getElementById('name').value.trim();
+    const category = document.getElementById('category').value;
+    const qty = parseInt(document.getElementById('qty').value);
+    const minStock = parseInt(document.getElementById('minStock').value) || 0;
+    const cost = parseFloat(document.getElementById('cost').value) || 0;
+    const price = parseFloat(document.getElementById('price').value) || 0;
+
+    if(!name) return alert('กรุณากรอกชื่อสินค้า');
+    if(isNaN(qty)) return alert('จำนวนไม่ถูกต้อง');
+
+    if(editIndex!==null){
+      const old = products[editIndex];
+      products[editIndex] = {name,category,qty,minStock,cost,price};
+      addLog(`แก้ไขสินค้า: ${name} (จาก ${old.qty} -> ${qty})`);
+      editIndex = null; document.getElementById('addBtn').innerText='เพิ่มสินค้า';
+    } else {
+      products.push({name,category,qty,minStock,cost,price});
+      addLog(`เพิ่มสินค้าใหม่: ${name} (${qty} ชิ้น)`);
+    }
+    save(); render(); clearForm();
+  }
+
+  function clearForm(){
+    ['name','qty','minStock','cost','price'].forEach(id=>document.getElementById(id).value='');
+  }
+
+  function editProduct(i){
+    editIndex = i; const p = products[i];
+    document.getElementById('name').value = p.name;
+    document.getElementById('category').value = p.category||'ทั่วไป';
+    document.getElementById('qty').value = p.qty;
+    document.getElementById('minStock').value = p.minStock||0;
+    document.getElementById('cost').value = p.cost||0;
+    document.getElementById('price').value = p.price||0;
+    document.getElementById('addBtn').innerText = 'บันทึกการแก้ไข';
+  }
+
+  function changeQty(i,amount){
+    const before = products[i].qty;
+    products[i].qty = Math.max(0, products[i].qty + amount);
+    addLog(`${amount>0? 'เพิ่ม':'ลด'} ${Math.abs(amount)} ชิ้น -> ${products[i].name} (${before} → ${products[i].qty})`);
+    save(); render();
+  }
+
+  function removeProduct(i){
+    if(!confirm('ลบสินค้านี้หรือไม่?')) return;
+    const p = products.splice(i,1)[0];
+    addLog(`ลบสินค้า: ${p.name}`);
+    save(); render();
+  }
+
+  function render(){
+    rebuildCategories();
+    const list = document.getElementById('list');
+    const search = document.getElementById('search').value.toLowerCase();
+    const filterCat = document.getElementById('filterCategory').value;
+    const sortBy = document.getElementById('sortBy').value;
+
+    let view = products.map((p,i)=>({...p,_idx:i}));
+    if(filterCat!=='all') view = view.filter(v=> (v.category||'ทั่วไป')===filterCat);
+    if(search) view = view.filter(v=> v.name.toLowerCase().includes(search));
+
+    // compute value
+    view.forEach(v=> v.value = (v.qty||0) * (v.cost||0));
+
+    // sort
+    if(sortBy==='name') view.sort((a,b)=>a.name.localeCompare(b.name));
+    if(sortBy==='qty_desc') view.sort((a,b)=>b.qty-a.qty);
+    if(sortBy==='qty_asc') view.sort((a,b)=>a.qty-b.qty);
+    if(sortBy==='value_desc') view.sort((a,b)=>b.value-a.value);
+    if(sortBy==='value_asc') view.sort((a,b)=>a.value-b.value);
+
+    let html=''; let totalItems=0; let totalValue=0; let totalCost=0;
+    view.forEach(v=>{
+      totalItems += v.qty||0; totalValue += (v.qty||0)*(v.price||0); totalCost += (v.qty||0)*(v.cost||0);
+      const cls = (v.minStock && v.qty<=v.minStock) ? (v.qty===0? 'critical' : 'low') : '';
+      html += `<div class="item ${cls}">`+
+              `<div>
+                <strong>${escapeHtml(v.name)}</strong> <span class="meta">[${v.category||'ทั่วไป'}]</span><br>
+                <span class="meta">จำนวน: ${v.qty} | ต้นทุน: ${formatMoney(v.cost)} | ราคา: ${formatMoney(v.price)} | มูลค่า: ${formatMoney((v.qty||0)*(v.cost||0))}</span>
+              </div>`+
+              `<div class="btns">
+                ${v.minStock? `<span title="Minimum stock">⚠<small>${v.minStock}</small></span>` : ''}
+                <button onclick="changeQty(${v._idx},1)">+</button>
+                <button onclick="changeQty(${v._idx},-1)">-</button>
+                <button onclick="editProduct(${v._idx})">แก้ไข</button>
+                <button class="danger" onclick="removeProduct(${v._idx})">ลบ</button>
+              </div>`+
+             `</div>`;
+    });
+    list.innerHTML = html || '<div style="padding:12px;color:#666">ยังไม่มีสินค้า</div>';
+
+    document.getElementById('summary').innerHTML = `
+      📦 จำนวนสินค้ารวม: <b>${totalItems}</b> ชิ้น<br>
+      💰 มูลค่ารวม (ราคาขาย): <b>${formatMoney(totalValue)}</b> บาท<br>
+      🧾 ต้นทุนรวม: <b>${formatMoney(totalCost)}</b> บาท<br>
+      💵 กำไร (โดยประมาณ): <b>${formatMoney(totalValue - totalCost)}</b> บาท
+    `;
+  }
+
+  function renderLogs(){
+    const el = document.getElementById('logs');
+    el.innerHTML = logs.map(l=>`<div>${escapeHtml(l)}</div>`).join('') || '<div style="color:#666">ยังไม่มีบันทึก</div>';
+  }
+
+  function formatMoney(n){ return Number(n||0).toLocaleString(undefined,{maximumFractionDigits:2}); }
+  function escapeHtml(s){ return (s+'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+  // CSV Export/Import (basic)
+  function exportCSV(){
+    let csv = 'name,category,qty,minStock,cost,price\n';
+    products.forEach(p=> csv += `${escapeCsv(p.name)},${escapeCsv(p.category)},${p.qty||0},${p.minStock||0},${p.cost||0},${p.price||0}\n`);
+    const blob = new Blob([csv],{type:'text/csv'}); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download='products.csv'; a.click(); URL.revokeObjectURL(url);
+  }
+  function escapeCsv(s){ if(s==null) return ''; return '"'+(s+'').replaceAll('"','""')+'"'; }
+
+  function importCSV(){
+    const inp = document.createElement('input'); inp.type='file'; inp.accept='.csv';
+    inp.onchange = e => {
+      const file = e.target.files[0]; if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const text = ev.target.result; const rows = text.split(/\r?\n/).filter(r=>r.trim());
+        rows.slice(1).forEach(r=>{
+          const cols = parseCsvLine(r);
+          if(cols.length<6) return;
+          products.push({name:cols[0],category:cols[1],qty:parseInt(cols[2])||0,minStock:parseInt(cols[3])||0,cost:parseFloat(cols[4])||0,price:parseFloat(cols[5])||0});
+        });
+        addLog('นำเข้า CSV'); save(); render();
+      };
+      reader.readAsText(file,'UTF-8');
+    };
+    inp.click();
+  }
+  function parseCsvLine(line){
+    // very simple CSV parse supporting quoted fields
+    const out=[]; let cur=''; let inQ=false; for(let i=0;i<line.length;i++){const ch=line[i]; if(inQ){ if(ch==='"' && line[i+1]==='"'){cur+='"'; i++;} else if(ch==='"'){inQ=false;} else cur+=ch;} else { if(ch===','){out.push(cur); cur='';} else if(ch==='"'){inQ=true;} else cur+=ch; }} out.push(cur); return out;
+  }
+
+  function clearAll(){ if(confirm('ล้างข้อมูลทั้งหมด (รวมบันทึก)?')){ products=[]; logs=[]; save(); render(); renderLogs(); }}
+
+  // initial render
+  render(); renderLogs();
+
+  // PWA: create and register a small service worker via blob; create manifest via blob
+  // Service Worker (offline caching minimal)
+  const swCode = `self.addEventListener('install', e=>{self.skipWaiting();});self.addEventListener('fetch', e=>{});`;
+  try{
+    const swBlob = new Blob([swCode],{type:'application/javascript'});
+    const swUrl = URL.createObjectURL(swBlob);
+    if('serviceWorker' in navigator){ navigator.serviceWorker.register(swUrl).catch(()=>{}); }
+  } catch(e){}
+
+  // create manifest
+  const manifest = {
+    name: 'Stock Counter',
+    short_name: 'Stock',
+    start_url: '.',
+    display: 'standalone',
+    background_color: '#ffffff',
+    icons: [{src:'data:image/png;base64,iVBORw0KGgo=',sizes:'192x192',type:'image/png'}]
+  };
+  const mBlob = new Blob([JSON.stringify(manifest)],{type:'application/json'});
+  const mUrl = URL.createObjectURL(mBlob);
+  const link = document.createElement('link'); link.rel='manifest'; link.href=mUrl; document.head.appendChild(link);
+
+  // handle beforeinstallprompt
+  let deferredPrompt;
+  window.addEventListener('beforeinstallprompt', (e)=>{
+    e.preventDefault(); deferredPrompt = e; const btn = document.getElementById('promptInstall'); btn.style.display='block';
+    btn.onclick = async ()=>{ deferredPrompt.prompt(); const choice = await deferredPrompt.userChoice; if(choice.outcome==='accepted'){ addLog('ผู้ใช้ติดตั้งแอป'); } deferredPrompt = null; btn.style.display='none'; };
+  });
+
+  // small UX: highlight items that are low or critical - handled via classes in render()
+
+  // friendly tip: autosave every 10s
+  setInterval(()=> save(),10000);
+
+</script>
+</body>
+</html>
